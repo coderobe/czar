@@ -1,0 +1,28 @@
+# czar
+
+clean-room implementation of a [XAR](https://en.wikipedia.org/wiki/Xar_%28archiver%29) unarchiver
+
+## status
+
+- [ ] Header
+	- [x] Magic
+	- [x] Header size
+	- [x] Version
+	- [x] TOC length (compressed)
+	- [x] TOC length (uncompressed)
+	- [ ] Checksum algorithm
+		- [x] None
+		- [x] SHA1
+		- [x] MD5
+		- [ ] Custom
+- [ ] TOC
+	- [x] Extraction
+	- [ ] Parsing
+- [ ] Heap
+	- [ ] Extraction
+		- [ ] gzip
+		- [ ] bzip2
+
+---
+
+This project, initially authored by Robin Broda in 2018, is licensed under the GNU Lesser General Public License v3.0
