@@ -15,9 +15,9 @@ clean-room implementation of a [XAR](https://en.wikipedia.org/wiki/Xar_%28archiv
 		- [x] SHA1
 		- [x] MD5
 		- [ ] Custom
-- [ ] TOC
+- [x] TOC
 	- [x] Extraction
-	- [ ] Parsing
+	- [x] Parsing
 - [ ] Heap
 	- [ ] Extraction
 		- [ ] gzip
