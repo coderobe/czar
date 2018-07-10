@@ -1,0 +1,16 @@
+name: czar
+version: 0.1.0
+
+authors:
+  - Robin Broda <robin@broda.me>
+
+targets:
+  czar:
+    main: czar.cr
+
+dependencies:
+  binary_parser:
+    github: DanSnow/crystal-binary_parser
+    commit: 3934e71d210c1f2082a7a1e5ecc8cdfe397e79e2
+
+license: LGPL3

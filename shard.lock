@@ -1,0 +1,6 @@
+version: 1.0
+shards:
+  binary_parser:
+    github: DanSnow/crystal-binary_parser
+    commit: 3934e71d210c1f2082a7a1e5ecc8cdfe397e79e2
+
