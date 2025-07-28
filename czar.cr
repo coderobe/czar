@@ -1,11 +1,14 @@
 #!/usr/bin/env crystal
-
 require "binary_parser"
 require "compress/zlib"
+require "compress/gzip"
 require "xml"
 
+require "./sliceio"
+require "./bzip2"
+
 def perror(msg : String)
-  STDERR.write Slice.new (msg + "\n").to_unsafe, (msg + "\n").size
+  STDERR.write Slice.new((msg + "\n").to_unsafe, (msg + "\n").size)
   exit 1
 end
 
@@ -117,15 +120,13 @@ def xar_decode_file(entity : XML::Node, path : String = "./")
   file.size = (xml_value(entity, "size").first rescue 0).to_u64
 
   data = xml_select(entity, "data")
-  unless data.size < 1
+  unless data.empty?
     xar_decode_data data.first, file.data
   end
-
   ea = xml_select(entity, "ea")
-  unless ea.size < 1
+  unless ea.empty?
     xar_decode_ea ea.first, file.ea
   end
-
   files = [file]
   children = xml_select(entity, "file")
   if children.size > 0
@@ -141,7 +142,7 @@ end
 
 perror "no filename given" if ARGV.size == 0
 
-File.open ARGV.first, "r" do |file|
+File.open(ARGV.first, "r") do |file|
   header = XARHeader.new
   header.load file
 
@@ -156,6 +157,7 @@ File.open ARGV.first, "r" do |file|
 
   toc_data = Bytes.new header.length_uncompressed
   file.seek header.header_size
+
   Compress::Zlib::Reader.open file do |zfile|
     zfile.read toc_data
   end
@@ -166,16 +168,15 @@ File.open ARGV.first, "r" do |file|
 
   tocs = xml_select(xar_obj.first, "toc")
   perror "empty TOC" if tocs.empty?
+
   toc = tocs.first
-
   puts "reading TOC"
-  xar = XAR.new
 
+  xar = XAR.new
   elem = xml_select(toc, "checksum").first
   xar.checksum.style = XARChecksumAlgo.parse elem["style"]
   xar.checksum.size = xml_value(elem, "size").first.to_u64
   xar.checksum.offset = xml_value(elem, "offset").first.to_u64
-
   puts "TOC is checksummed as #{xar.checksum.style}, #{xar.checksum.size} bytes at offset #{xar.checksum.offset}"
 
   xml_select(toc, "file").each do |entity|
@@ -183,6 +184,44 @@ File.open ARGV.first, "r" do |file|
   end
 
   puts "contains #{xar.files.select { |e| e.type == XARFileType::FILE }.size} files across #{xar.files.select { |e| e.type == XARFileType::DIRECTORY }.size} directories"
-
   puts xar.files.map{ |e| "#{e.path}#{e.name}" }.join " "
+
+  # Unarchive files
+  xar.files.each do |xarfile|
+    next if xarfile.type == XARFileType::DIRECTORY
+
+    output_path = File.join("#{ARGV.first}.extracted", xarfile.path, xarfile.name)
+    Dir.mkdir_p(File.dirname(output_path)) unless File.exists?(File.dirname(output_path))
+
+    # Log file metadata
+    puts "Processing file: #{output_path}"
+    puts "  Offset: #{xarfile.data.offset}"
+    puts "  Size: #{xarfile.data.size}"
+    puts "  Encoding: #{xarfile.data.encoding}"
+
+    # Seek to the correct offset in the archive file
+    file.seek header.header_size.to_u64 + header.length_compressed + xarfile.data.offset
+
+    # Read the compressed data
+    compressed_data = Bytes.new(xarfile.data.size)
+    file.read(compressed_data)
+
+    # Decompress the data if necessary
+    decompressed_data = case xarfile.data.encoding
+    when XARFileEncoding::GZIP
+      Compress::Gzip::Reader.new(SliceIO.new(compressed_data)).getb_to_end
+    when XARFileEncoding::BZIP2
+      Bzip2::Reader.new(SliceIO.new(compressed_data)).getb_to_end
+    else
+      compressed_data
+    end
+
+    # Write the decompressed data to the output file
+    begin
+      File.write(output_path, decompressed_data)
+      puts "Extracted: #{output_path}"
+    rescue e
+      perror "Error writing file #{output_path}: #{e}"
+    end
+  end
 end
