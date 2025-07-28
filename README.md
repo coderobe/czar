@@ -23,6 +23,11 @@ clean-room implementation of a [XAR](https://en.wikipedia.org/wiki/Xar_%28archiv
 		- [ ] gzip
 		- [ ] bzip2
 
+## current features
+
+- archive info
+- file listing
+
 ---
 
-This project, initially authored by Robin Broda in 2018, is licensed under the GNU Lesser General Public License v3.0
+This project, initially authored by Mara Robin Broda in 2018, is licensed under the GNU Lesser General Public License v3.0
