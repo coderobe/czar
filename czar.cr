@@ -1,7 +1,7 @@
 #!/usr/bin/env crystal
 
 require "binary_parser"
-require "zlib"
+require "compress/zlib"
 require "xml"
 
 def perror(msg : String)
@@ -175,7 +175,7 @@ File.open "test.xar", "r" do |file|
 
   toc_data = Bytes.new header.length_uncompressed
   file.seek header.header_size
-  Zlib::Reader.open file do |zfile|
+  Compress::Zlib::Reader.open file do |zfile|
     zfile.read toc_data
   end
 
