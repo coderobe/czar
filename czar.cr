@@ -148,7 +148,7 @@ def validate_heap_checksum(file : IO, header : XARHeader, xar : XAR) : Bool
   file.seek heap_start + xar.checksum.offset
   stored_checksum_data = Bytes.new(xar.checksum.size)
   file.read(stored_checksum_data)
-  stored_checksum = String.new(stored_checksum_data).strip
+  stored_checksum = stored_checksum_data.hexstring
 
   if calculated.downcase == stored_checksum.downcase
     puts "✓ Heap checksum valid (#{xar.checksum.style})"
@@ -263,8 +263,6 @@ File.open(filename, "r") do |file|
     zfile.read toc_data
   end
 
-  # TODO: toc checksum
-
   xar_xml = XML.parse String.new(toc_data)
   xar_obj = xml_select(xar_xml, "xar")
   perror "empty xar object" if xar_obj.empty?
@@ -281,6 +279,11 @@ File.open(filename, "r") do |file|
   xar.checksum.size = xml_value(elem, "size").first.to_u64
   xar.checksum.offset = xml_value(elem, "offset").first.to_u64
   puts "TOC is checksummed as #{xar.checksum.style}, #{xar.checksum.size} bytes at offset #{xar.checksum.offset}"
+
+  file.seek xar.checksum.offset
+  toc_checksum = Bytes.new xar.checksum.size
+  file.read(toc_checksum)
+  validate_checksum(toc_data, toc_checksum.hexstring, xar.checksum.style, "TOC")
 
   xml_select(toc, "file").each do |entity|
     xar.files += xar_decode_file entity
