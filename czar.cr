@@ -182,6 +182,7 @@ File.open ARGV.first, "r" do |file|
     xar.files += xar_decode_file entity
   end
 
-  puts "#{xar.files.select { |e| e.type == XARFileType::FILE }.size} files"
-  puts "#{xar.files.select { |e| e.type == XARFileType::DIRECTORY }.size} directories"
+  puts "contains #{xar.files.select { |e| e.type == XARFileType::FILE }.size} files across #{xar.files.select { |e| e.type == XARFileType::DIRECTORY }.size} directories"
+
+  puts xar.files.map{ |e| "#{e.path}#{e.name}" }.join " "
 end
