@@ -3,6 +3,8 @@ require "binary_parser"
 require "compress/zlib"
 require "compress/gzip"
 require "xml"
+require "digest/md5"
+require "digest/sha1"
 
 require "./sliceio"
 require "./bzip2"
@@ -89,6 +91,76 @@ class XAR
   property files : Array(XARFile) = [] of XARFile
 end
 
+def calculate_checksum(data : Bytes, algo : XARChecksumAlgo) : String
+  case algo
+  when XARChecksumAlgo::MD5
+    Digest::MD5.hexdigest(data)
+  when XARChecksumAlgo::SHA1
+    Digest::SHA1.hexdigest(data)
+  else
+    ""
+  end
+end
+
+def validate_checksum(data : Bytes, expected : String, algo : XARChecksumAlgo, description : String) : Bool
+  return true if algo == XARChecksumAlgo::NONE || expected.empty?
+
+  calculated = calculate_checksum(data, algo)
+  if calculated.downcase == expected.downcase
+    puts "✓ #{description} checksum valid (#{algo})"
+    return true
+  else
+    puts "✗ #{description} checksum INVALID!"
+    puts "  Expected: #{expected.downcase}"
+    puts "  Calculated: #{calculated.downcase}"
+    return false
+  end
+end
+
+def validate_heap_checksum(file : IO, header : XARHeader, xar : XAR) : Bool
+  return true if xar.checksum.style == XARChecksumAlgo::NONE
+
+  puts "Validating heap checksum..."
+
+  # Calculate the total heap size (all file data)
+  heap_start = header.header_size.to_u64 + header.length_compressed
+  heap_size = 0_u64
+
+  xar.files.each do |xarfile|
+    next if xarfile.type == XARFileType::DIRECTORY
+    heap_size = [heap_size, xarfile.data.offset + xarfile.data.size].max
+  end
+
+  if heap_size == 0
+    puts "No heap data found"
+    return true
+  end
+
+  # Read the entire heap data
+  file.seek heap_start
+  heap_data = Bytes.new(heap_size)
+  file.read(heap_data)
+
+  # Calculate checksum of heap data
+  calculated = calculate_checksum(heap_data, xar.checksum.style)
+
+  # Read the stored checksum
+  file.seek heap_start + xar.checksum.offset
+  stored_checksum_data = Bytes.new(xar.checksum.size)
+  file.read(stored_checksum_data)
+  stored_checksum = String.new(stored_checksum_data).strip
+
+  if calculated.downcase == stored_checksum.downcase
+    puts "✓ Heap checksum valid (#{xar.checksum.style})"
+    return true
+  else
+    puts "✗ Heap checksum INVALID!"
+    puts "  Expected: #{stored_checksum.downcase}"
+    puts "  Calculated: #{calculated.downcase}"
+    return false
+  end
+end
+
 def xar_decode_data(entity : XML::Node, data : XARFileData = XARFileData.new)
   data.offset = (xml_value(entity, "offset").first rescue 0).to_u64
   data.size = (xml_value(entity, "size").first rescue 0).to_u64
@@ -140,9 +212,38 @@ def xar_decode_file(entity : XML::Node, path : String = "./")
   files
 end
 
-perror "no filename given" if ARGV.size == 0
+# Parse command line options
+strict_mode = false
+no_extract = false
+filename = ""
 
-File.open(ARGV.first, "r") do |file|
+i = 0
+while i < ARGV.size
+  case ARGV[i]
+  when "--strict"
+    strict_mode = true
+  when "--no-extract"
+    no_extract = true
+  when "--help", "-h"
+    puts "Usage: #{PROGRAM_NAME} [options] <xar_file>"
+    puts "Options:"
+    puts "  --strict      Fail extraction if any checksum validation fails"
+    puts "  --no-extract  Only validate checksums, don't extract files"
+    puts "  --help, -h    Show this help message"
+    exit 0
+  else
+    if filename.empty?
+      filename = ARGV[i]
+    else
+      perror "multiple filenames provided"
+    end
+  end
+  i += 1
+end
+
+perror "no filename given" if filename.empty?
+
+File.open(filename, "r") do |file|
   header = XARHeader.new
   header.load file
 
@@ -161,6 +262,8 @@ File.open(ARGV.first, "r") do |file|
   Compress::Zlib::Reader.open file do |zfile|
     zfile.read toc_data
   end
+
+  # TODO: toc checksum
 
   xar_xml = XML.parse String.new(toc_data)
   xar_obj = xml_select(xar_xml, "xar")
@@ -184,13 +287,29 @@ File.open(ARGV.first, "r") do |file|
   end
 
   puts "contains #{xar.files.select { |e| e.type == XARFileType::FILE }.size} files across #{xar.files.select { |e| e.type == XARFileType::DIRECTORY }.size} directories"
-  puts xar.files.map{ |e| "#{e.path}#{e.name}" }.join " "
+  puts xar.files.map { |e| "#{e.path}#{e.name}" }.join " "
 
-  # Unarchive files
+  # Validate heap checksum if present
+  heap_valid = validate_heap_checksum(file, header, xar)
+  if !heap_valid && strict_mode
+    perror "Heap checksum validation failed (strict mode enabled)"
+  elsif !heap_valid
+    puts "Warning: Heap checksum validation failed, continuing anyway"
+  end
+
+  # Unarchive files (or just validate if --no-extract is specified)
+  validation_results = {
+    "files_processed"             => 0,
+    "files_extracted"             => 0,
+    "checksum_failures"           => 0,
+    "archived_checksum_failures"  => 0,
+    "extracted_checksum_failures" => 0,
+  }
+
   xar.files.each do |xarfile|
     next if xarfile.type == XARFileType::DIRECTORY
 
-    output_path = File.join("#{ARGV.first}.extracted", xarfile.path, xarfile.name)
+    output_path = File.join("#{filename}.extracted", xarfile.path, xarfile.name)
     Dir.mkdir_p(File.dirname(output_path)) unless File.exists?(File.dirname(output_path))
 
     # Log file metadata
@@ -206,22 +325,84 @@ File.open(ARGV.first, "r") do |file|
     compressed_data = Bytes.new(xarfile.data.size)
     file.read(compressed_data)
 
+    validation_results["files_processed"] += 1
+
+    # Validate archived checksum (on compressed data)
+    archived_valid = validate_checksum(compressed_data, xarfile.data.checksum_archived,
+      xarfile.data.checksum_archived_style,
+      "archived data for #{xarfile.name}")
+
     # Decompress the data if necessary
     decompressed_data = case xarfile.data.encoding
-    when XARFileEncoding::GZIP
-      Compress::Gzip::Reader.new(SliceIO.new(compressed_data)).getb_to_end
-    when XARFileEncoding::BZIP2
-      Bzip2::Reader.new(SliceIO.new(compressed_data)).getb_to_end
-    else
-      compressed_data
+                        when XARFileEncoding::GZIP
+                          begin
+                            Compress::Gzip::Reader.new(SliceIO.new(compressed_data)).getb_to_end
+                          rescue e
+                            puts "Error decompressing GZIP data for #{xarfile.name}: #{e}"
+                            next
+                          end
+                        when XARFileEncoding::BZIP2
+                          begin
+                            Bzip2::Reader.new(SliceIO.new(compressed_data)).getb_to_end
+                          rescue e
+                            puts "Error decompressing BZIP2 data for #{xarfile.name}: #{e}"
+                            next
+                          end
+                        else
+                          compressed_data
+                        end
+
+    # Validate extracted checksum (on decompressed data)
+    extracted_valid = validate_checksum(decompressed_data, xarfile.data.checksum_extracted,
+      xarfile.data.checksum_extracted_style,
+      "extracted data for #{xarfile.name}")
+
+    # Track validation results
+    unless archived_valid
+      validation_results["archived_checksum_failures"] += 1
+    end
+    unless extracted_valid
+      validation_results["extracted_checksum_failures"] += 1
     end
 
-    # Write the decompressed data to the output file
-    begin
-      File.write(output_path, decompressed_data)
-      puts "Extracted: #{output_path}"
-    rescue e
-      perror "Error writing file #{output_path}: #{e}"
+    # Handle checksum validation results
+    checksum_failed = !archived_valid || !extracted_valid
+    if checksum_failed
+      validation_results["checksum_failures"] += 1
     end
+
+    if checksum_failed && strict_mode
+      perror "Checksum validation failed for #{output_path} (strict mode enabled)"
+    elsif checksum_failed
+      puts "Warning: Checksum validation failed for #{output_path}, extracting anyway"
+    end
+
+    # Write the file (unless --no-extract is specified)
+    if no_extract
+      puts "Validated: #{output_path} (not extracted)"
+    else
+      begin
+        File.write(output_path, decompressed_data)
+        puts "Extracted: #{output_path}"
+        validation_results["files_extracted"] += 1
+      rescue e
+        perror "Error writing file #{output_path}: #{e}"
+      end
+    end
+  end
+
+  # Print validation summary
+  puts "\n=== #{no_extract ? "Validation" : "Extraction"} Summary ==="
+  puts "Files processed: #{validation_results["files_processed"]}"
+  puts "Files extracted: #{validation_results["files_extracted"]}" unless no_extract
+  puts "Checksum failures: #{validation_results["checksum_failures"]}"
+  puts "  - Archived checksum failures: #{validation_results["archived_checksum_failures"]}"
+  puts "  - Extracted checksum failures: #{validation_results["extracted_checksum_failures"]}"
+  puts "Heap checksum: #{heap_valid ? "✓ Valid" : "✗ Invalid"}"
+
+  if validation_results["checksum_failures"] > 0 || !heap_valid
+    puts "\nWarning: Some checksum validations failed. The extracted files may be corrupted."
+  else
+    puts "\n✓ All checksums validated successfully!"
   end
 end

@@ -10,7 +10,7 @@ clean-room implementation of a [XAR](https://en.wikipedia.org/wiki/Xar_%28archiv
 	- [x] Version
 	- [x] TOC length (compressed)
 	- [x] TOC length (uncompressed)
-	- [ ] Checksum algorithm
+	- [x] Checksum algorithm
 		- [x] None
 		- [x] SHA1
 		- [x] MD5
@@ -18,18 +18,45 @@ clean-room implementation of a [XAR](https://en.wikipedia.org/wiki/Xar_%28archiv
 - [x] TOC
 	- [x] Extraction
 	- [x] Parsing
-- [ ] Heap
-	- [ ] Extraction
+	- [ ] Checksum validation
+- [x] Heap
+	- [x] Extraction
 		- [x] gzip
 		- [x] bzip2
+	- [x] Checksum validation
 
 ## current features
 
 - archive info
 - file listing
+- checksum validation
+	- TOC unfinished, heap works (experimental)
 - decompression **(experimental!)**
 	- bzip2 appears to be unreliable (i could get a test archive to decompress several files, but fail on others?)
 	- gzip is implemented but UNTESTED
+
+## usage
+
+```
+Usage: czar [options] <xar_file>
+Options:
+  --strict      Fail extraction if any checksum validation fails
+  --no-extract  Only validate checksums, don't extract files
+  --help, -h    Show this help message
+```
+
+### examples
+
+```bash
+# Extract archive with checksum validation
+./czar archive.xar
+
+# Validate checksums only (no extraction)
+./czar --no-extract archive.xar
+
+# Strict mode - fail if any checksum is invalid
+./czar --strict archive.xar
+```
 
 ---
 
