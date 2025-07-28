@@ -36,27 +36,6 @@ enum XARFileEncoding
   BZIP2
 end
 
-class SliceIO < IO
-  def initialize(@slice : Bytes)
-  end
-
-  def read(slice : Bytes)
-    slice.size.times { |i| slice[i] = @slice[i] }
-    @slice += slice.size
-    slice.size
-  end
-
-  def write(slice : Bytes)
-    slice.size.times { |i| @slice[i] = slice[i] }
-    @slice += slice.size
-    nil
-  end
-
-  def to_slice
-    @slice
-  end
-end
-
 class XARHeader < BinaryParser
   endian :big
   string :magic, {count: 4}
@@ -181,8 +160,13 @@ File.open ARGV.first, "r" do |file|
     zfile.read toc_data
   end
 
-  xar_xml = XML.parse SliceIO.new toc_data
-  toc = xml_select(xml_select(xar_xml, "xar").first, "toc").first
+  xar_xml = XML.parse String.new(toc_data)
+  xar_obj = xml_select(xar_xml, "xar")
+  perror "empty xar object" if xar_obj.empty?
+
+  tocs = xml_select(xar_obj.first, "toc")
+  perror "empty TOC" if tocs.empty?
+  toc = tocs.first
 
   puts "reading TOC"
   xar = XAR.new
