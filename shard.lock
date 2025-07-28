@@ -1,6 +1,6 @@
-version: 1.0
+version: 2.0
 shards:
   binary_parser:
-    github: DanSnow/crystal-binary_parser
-    commit: 3934e71d210c1f2082a7a1e5ecc8cdfe397e79e2
+    git: https://github.com/dansnow/crystal-binary_parser.git
+    version: 0.0.1+git.commit.3934e71d210c1f2082a7a1e5ecc8cdfe397e79e2
 
