@@ -160,7 +160,9 @@ def xar_decode_file(entity : XML::Node, path : String = "./")
   files
 end
 
-File.open "test.xar", "r" do |file|
+perror "no filename given" if ARGV.size == 0
+
+File.open ARGV.first, "r" do |file|
   header = XARHeader.new
   header.load file
 
