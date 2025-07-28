@@ -20,13 +20,16 @@ clean-room implementation of a [XAR](https://en.wikipedia.org/wiki/Xar_%28archiv
 	- [x] Parsing
 - [ ] Heap
 	- [ ] Extraction
-		- [ ] gzip
-		- [ ] bzip2
+		- [x] gzip
+		- [x] bzip2
 
 ## current features
 
 - archive info
 - file listing
+- decompression **(experimental!)**
+	- bzip2 appears to be unreliable (i could get a test archive to decompress several files, but fail on others?)
+	- gzip is implemented but UNTESTED
 
 ---
 
