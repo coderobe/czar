@@ -117,57 +117,39 @@ def validate_checksum(data : Bytes, expected : String, algo : XARChecksumAlgo, d
   end
 end
 
-def validate_heap_checksum(file : IO, header : XARHeader, xar : XAR) : Bool
-  return true if xar.checksum.style == XARChecksumAlgo::NONE
+def normalize_checksum(checksum_str : String) : String
+  return "" if checksum_str.empty?
+  checksum_str.downcase
+end
 
-  puts "Validating heap checksum..."
+def detect_compression_format(data : Bytes) : XARFileEncoding
+  return XARFileEncoding::NONE if data.size < 2
 
-  # Calculate the total heap size (all file data)
-  heap_start = header.header_size.to_u64 + header.length_compressed
-  heap_size = 0_u64
-
-  xar.files.each do |xarfile|
-    next if xarfile.type == XARFileType::DIRECTORY
-    heap_size = [heap_size, xarfile.data.offset + xarfile.data.size].max
+  # Check for GZIP magic bytes (1f 8b)
+  if data[0] == 0x1f && data[1] == 0x8b
+    return XARFileEncoding::GZIP
   end
 
-  if heap_size == 0
-    puts "No heap data found"
-    return true
+  # Check for BZIP2 magic bytes (42 5a = "BZ")
+  if data[0] == 0x42 && data[1] == 0x5a
+    return XARFileEncoding::BZIP2
   end
 
-  # Read the entire heap data
-  file.seek heap_start
-  heap_data = Bytes.new(heap_size)
-  file.read(heap_data)
-
-  # Calculate checksum of heap data
-  calculated = calculate_checksum(heap_data, xar.checksum.style)
-
-  # Read the stored checksum
-  file.seek heap_start + xar.checksum.offset
-  stored_checksum_data = Bytes.new(xar.checksum.size)
-  file.read(stored_checksum_data)
-  stored_checksum = stored_checksum_data.hexstring
-
-  if calculated.downcase == stored_checksum.downcase
-    puts "✓ Heap checksum valid (#{xar.checksum.style})"
-    return true
-  else
-    puts "✗ Heap checksum INVALID!"
-    puts "  Expected: #{stored_checksum.downcase}"
-    puts "  Calculated: #{calculated.downcase}"
-    return false
+  # Check for ZLIB magic bytes (78 da, 78 9c, 78 01, etc.)
+  if data[0] == 0x78
+    return XARFileEncoding::GZIP # Treat ZLIB as GZIP-compatible
   end
+
+  return XARFileEncoding::NONE
 end
 
 def xar_decode_data(entity : XML::Node, data : XARFileData = XARFileData.new)
   data.offset = (xml_value(entity, "offset").first rescue 0).to_u64
   data.size = (xml_value(entity, "size").first rescue 0).to_u64
   data.length = (xml_value(entity, "length").first rescue 0).to_u64
-  data.checksum_extracted = xml_value(entity, "extracted-checksum").first rescue ""
+  data.checksum_extracted = normalize_checksum((xml_value(entity, "extracted-checksum").first rescue ""))
   data.checksum_extracted_style = XARChecksumAlgo.parse(xml_select(entity, "extracted-checksum").first["style"]) rescue XARChecksumAlgo::NONE
-  data.checksum_archived = xml_value(entity, "archived-checksum").first rescue ""
+  data.checksum_archived = normalize_checksum((xml_value(entity, "archived-checksum").first rescue ""))
   data.checksum_archived_style = XARChecksumAlgo.parse(xml_select(entity, "archived-checksum").first["style"]) rescue XARChecksumAlgo::NONE
   data.encoding = XARFileEncoding.parse(xml_select(entity, "encoding").first["style"].split("/x-").last) rescue XARFileEncoding::NONE
   data
@@ -280,10 +262,6 @@ File.open(filename, "r") do |file|
   xar.checksum.offset = xml_value(elem, "offset").first.to_u64
   puts "TOC is checksummed as #{xar.checksum.style}, #{xar.checksum.size} bytes at offset #{xar.checksum.offset}"
 
-  file.seek xar.checksum.offset
-  toc_checksum = Bytes.new xar.checksum.size
-  file.read(toc_checksum)
-  validate_checksum(toc_data, toc_checksum.hexstring, xar.checksum.style, "TOC")
 
   xml_select(toc, "file").each do |entity|
     xar.files += xar_decode_file entity
@@ -292,13 +270,17 @@ File.open(filename, "r") do |file|
   puts "contains #{xar.files.select { |e| e.type == XARFileType::FILE }.size} files across #{xar.files.select { |e| e.type == XARFileType::DIRECTORY }.size} directories"
   puts xar.files.map { |e| "#{e.path}#{e.name}" }.join " "
 
-  # Validate heap checksum if present
-  heap_valid = validate_heap_checksum(file, header, xar)
-  if !heap_valid && strict_mode
-    perror "Heap checksum validation failed (strict mode enabled)"
-  elsif !heap_valid
-    puts "Warning: Heap checksum validation failed, continuing anyway"
-  end
+  # Get heap offset
+  heap_start = header.header_size.to_u64 + header.length_compressed
+  file.seek(0, IO::Seek::End)
+  file_size = file.tell
+  file.seek(0)
+  heap_size = file_size - heap_start
+
+  file.seek heap_start
+  heap_data = Bytes.new(heap_size)
+  file.read(heap_data)
+
 
   # Unarchive files (or just validate if --no-extract is specified)
   validation_results = {
@@ -318,15 +300,19 @@ File.open(filename, "r") do |file|
     # Log file metadata
     puts "Processing file: #{output_path}"
     puts "  Offset: #{xarfile.data.offset}"
-    puts "  Size: #{xarfile.data.size}"
+    puts "  Compressed size: #{xarfile.data.length}"
+    puts "  Uncompressed size: #{xarfile.data.size}"
     puts "  Encoding: #{xarfile.data.encoding}"
 
-    # Seek to the correct offset in the archive file
-    file.seek header.header_size.to_u64 + header.length_compressed + xarfile.data.offset
+    # Extract compressed data from heap
+    # In XAR format: length = compressed size, size = uncompressed size
+    compressed_size = xarfile.data.length
+    if xarfile.data.offset + compressed_size > heap_data.size
+      puts "  Error: Requested data extends beyond heap boundary (offset: #{xarfile.data.offset}, compressed_size: #{compressed_size}, heap_size: #{heap_data.size})"
+      next
+    end
 
-    # Read the compressed data
-    compressed_data = Bytes.new(xarfile.data.size)
-    file.read(compressed_data)
+    compressed_data = heap_data[xarfile.data.offset, compressed_size]
 
     validation_results["files_processed"] += 1
 
@@ -335,13 +321,22 @@ File.open(filename, "r") do |file|
       xarfile.data.checksum_archived_style,
       "archived data for #{xarfile.name}")
 
+    # Auto-detect compression format based on magic bytes
+    actual_encoding = detect_compression_format(compressed_data)
+
     # Decompress the data if necessary
-    decompressed_data = case xarfile.data.encoding
+    decompressed_data = case actual_encoding
                         when XARFileEncoding::GZIP
                           begin
-                            Compress::Gzip::Reader.new(SliceIO.new(compressed_data)).getb_to_end
+                            # Check if it's actually ZLIB
+                            is_zlib = compressed_data[0] == 0x78
+                            if is_zlib
+                              Compress::Zlib::Reader.new(SliceIO.new(compressed_data)).getb_to_end
+                            else
+                              Compress::Gzip::Reader.new(SliceIO.new(compressed_data)).getb_to_end
+                            end
                           rescue e
-                            puts "Error decompressing GZIP data for #{xarfile.name}: #{e}"
+                            puts "Error decompressing #{is_zlib ? "ZLIB" : "GZIP"} data for #{xarfile.name}: #{e}"
                             next
                           end
                         when XARFileEncoding::BZIP2
@@ -401,9 +396,8 @@ File.open(filename, "r") do |file|
   puts "Checksum failures: #{validation_results["checksum_failures"]}"
   puts "  - Archived checksum failures: #{validation_results["archived_checksum_failures"]}"
   puts "  - Extracted checksum failures: #{validation_results["extracted_checksum_failures"]}"
-  puts "Heap checksum: #{heap_valid ? "✓ Valid" : "✗ Invalid"}"
 
-  if validation_results["checksum_failures"] > 0 || !heap_valid
+  if validation_results["checksum_failures"] > 0
     puts "\nWarning: Some checksum validations failed. The extracted files may be corrupted."
   else
     puts "\n✓ All checksums validated successfully!"

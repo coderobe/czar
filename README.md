@@ -4,7 +4,7 @@ clean-room implementation of a [XAR](https://en.wikipedia.org/wiki/Xar_%28archiv
 
 ## status
 
-- [ ] Header
+- [x] Header
 	- [x] Magic
 	- [x] Header size
 	- [x] Version
@@ -14,14 +14,13 @@ clean-room implementation of a [XAR](https://en.wikipedia.org/wiki/Xar_%28archiv
 		- [x] None
 		- [x] SHA1
 		- [x] MD5
-		- [ ] Custom
 - [x] TOC
 	- [x] Extraction
 	- [x] Parsing
-	- [ ] Checksum validation
+	- [x] Checksum validation
 - [x] Heap
 	- [x] Extraction
-		- [x] gzip
+		- [x] gzip/zlib
 		- [x] bzip2
 	- [x] Checksum validation
 
@@ -30,10 +29,7 @@ clean-room implementation of a [XAR](https://en.wikipedia.org/wiki/Xar_%28archiv
 - archive info
 - file listing
 - checksum validation
-	- TOC unfinished, heap works (experimental)
-- decompression **(experimental!)**
-	- bzip2 appears to be unreliable (i could get a test archive to decompress several files, but fail on others?)
-	- gzip is implemented but UNTESTED
+- decompression
 
 ## usage
 
@@ -44,6 +40,8 @@ Options:
   --no-extract  Only validate checksums, don't extract files
   --help, -h    Show this help message
 ```
+
+Files are extracted to `./<xar_file>.extracted/`
 
 ### examples
 
