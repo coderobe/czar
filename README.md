@@ -23,6 +23,7 @@ clean-room implementation of a [XAR](https://en.wikipedia.org/wiki/Xar_%28archiv
 		- [x] gzip/zlib
 		- [x] bzip2
 	- [x] Checksum validation
+- [ ] File Metadata
 
 ## current features
 
